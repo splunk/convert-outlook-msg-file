@@ -153,6 +153,9 @@ def process_attachment(msg, entry, doc):
     if isinstance(filename, bytes):
         filename = filename.decode("utf8")
 
+    if not filename:
+        filename = "noname"
+
     mime_type = props.get("ATTACH_MIME_TAG", "application/octet-stream")
     if isinstance(mime_type, bytes):
         mime_type = mime_type.decode("utf8")
