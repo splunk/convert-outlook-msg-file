@@ -123,7 +123,7 @@ def load_message_stream(entry, is_top_level, doc):
             rtf = compressed_rtf.decompress(rtf)
             # Add RTF file as an attachment.
             msg.add_attachment(rtf, maintype="text", subtype="rtf", filename=fn)
-            msg.set_content("<no plain text message body --- see attachment {}>".format(fn), cte="quoted-printable")
+            # msg.set_content("<no plain text message body --- see attachment {}>".format(fn), cte="quoted-printable")
         else:
             msg.set_content("-- EMPTY MESSAGE --")
 
