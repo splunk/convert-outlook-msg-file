@@ -121,9 +121,7 @@ def load_message_stream(entry, is_top_level, doc):
     doc.rtf_attachments += 1
     fn = "messagebody_{}.rtf".format(doc.rtf_attachments)
 
-    msg.set_content(
-      "<no plain text message body --- see attachment {}>".format(fn),
-      cte='quoted-printable')
+    #msg.set_content( "<no plain text message body --- see attachment {}>".format(fn), cte='quoted-printable')
 
     # Decompress the value to Rich Text Format.
     import compressed_rtf
