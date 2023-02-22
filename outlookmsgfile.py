@@ -57,12 +57,16 @@ def load_message_stream(entry, is_top_level, doc):
     headers = re.sub(r"Content-Type: .*(\n\s.*)*\n", "", headers, flags=re.I)
 
     # Parse them.
-    headers = email.parser.HeaderParser(policy=email.policy.default)\
-      .parsestr(headers)
+    try:
+        headers = email.parser.HeaderParser(policy=email.policy.default)\
+          .parsestr(headers)
 
-    # Copy them into the message object.
-    for header, value in headers.items():
-      msg[header] = value
+        # Copy them into the message object.
+        for header, value in headers.items():
+          msg[header] = value
+    except Exception as e:
+        print("Error parsing headers from python HeaderParser")
+
 
   else:
     # Construct common headers from metadata.
@@ -124,13 +128,18 @@ def load_message_stream(entry, is_top_level, doc):
     # Decompress the value to Rich Text Format.
     import compressed_rtf
     rtf = props['RTF_COMPRESSED']
-    rtf = compressed_rtf.decompress(rtf)
-
-    # Add RTF file as an attachment.
-    msg.add_attachment(
-      rtf,
-      maintype="text", subtype="rtf",
-      filename=fn)
+    if rtf:
+      rtf = compressed_rtf.decompress(rtf)
+      # Add RTF file as an attachment.
+      msg.add_attachment(
+        rtf,
+        maintype="text", subtype="rtf",
+        filename=fn)
+      msg.set_content(
+          "<no plain text message body --- see attachments {}>".format(fn), 
+          cte="quoted-printable")
+    else:
+        msg.set_content("-- EMPTY MESSAGE --")
 
   # # Copy over string values of remaining properties as headers
   # # so we don't lose any information.
