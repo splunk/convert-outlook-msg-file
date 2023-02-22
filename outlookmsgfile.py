@@ -107,41 +107,41 @@ def load_message_stream(entry, is_top_level, doc):
             msg['Subject'] = props['SUBJECT']
         del props['SUBJECT']
 
-    # prefer the RTF body if available
-    rtf = props.get("RTF_COMPRESSED")
-    if rtf:
-        # Decompress the value to Rich Text Format.
-        try:
-            rtf = compressed_rtf.decompress(rtf)
+  # prefer the RTF body if available
+  rtf = props.get("RTF_COMPRESSED")
+  if rtf:
+      # Decompress the value to Rich Text Format.
+      try:
+          rtf = compressed_rtf.decompress(rtf)
 
-            rtf_obj = DeEncapsulator(rtf)
-            rtf_obj.deencapsulate()
+          rtf_obj = DeEncapsulator(rtf)
+          rtf_obj.deencapsulate()
 
-            if msg.get_content_maintype() == "multipart":
-                if rtf_obj.content_type == "html":
-                    msg.add_attachment(rtf_obj.html)
-                else:
-                    msg.add_attachment(rtf_obj.text)
-            else:
-                if rtf_obj.content_type == "html":
-                    msg.set_content(rtf_obj.html, subtype="html", cte="8bit")
-                else:
-                    msg.set_content(rtf_obj.text, cte="8bit")
-        except Exception as e:
-            print("Failed to handle RTF message body")
-            msg.set_content("-- RTF Decode Failure --")
-    # otherwise fall back to the plaintext body
-    elif "BODY" in props:
-        body = props["BODY"]
-        if msg.get_content_maintype() == "multipart":
-            msg.add_attachment(body)
-        else:
-            if isinstance(body, str):
-                msg.set_content(body, cte="quoted-printable")
-            else:
-                msg.set_content(body, maintype="text", subtype="plain", cte="8bit")
-    else:
-        msg.set_content("-- EMPTY MESSAGE --")
+          if msg.get_content_maintype() == "multipart":
+              if rtf_obj.content_type == "html":
+                  msg.add_attachment(rtf_obj.html)
+              else:
+                  msg.add_attachment(rtf_obj.text)
+          else:
+              if rtf_obj.content_type == "html":
+                  msg.set_content(rtf_obj.html, subtype="html", cte="8bit")
+              else:
+                  msg.set_content(rtf_obj.text, cte="8bit")
+      except Exception as e:
+          print("Failed to handle RTF message body")
+          msg.set_content("-- RTF Decode Failure --")
+  # otherwise fall back to the plaintext body
+  elif "BODY" in props:
+      body = props["BODY"]
+      if msg.get_content_maintype() == "multipart":
+          msg.add_attachment(body)
+      else:
+          if isinstance(body, str):
+              msg.set_content(body, cte="quoted-printable")
+          else:
+              msg.set_content(body, maintype="text", subtype="plain", cte="8bit")
+  else:
+      msg.set_content("-- EMPTY MESSAGE --")
 
 
   # # Copy over string values of remaining properties as headers
