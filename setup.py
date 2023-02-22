@@ -3,6 +3,7 @@ import setuptools
 install_requires = [
     'compoundfiles',
     'compressed_rtf',
+    'RTFDE',
 ]
 
 with open("README.md", "r") as fh:
