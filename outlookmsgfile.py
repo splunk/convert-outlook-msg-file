@@ -16,6 +16,7 @@ import re
 import logging
 import os
 import sys
+import codecs
 
 from functools import reduce
 
@@ -28,6 +29,42 @@ from RTFDE.deencapsulate import DeEncapsulator
 
 logger = logging.getLogger(__name__)
 
+class ParseResult:
+  """
+     ParseResult tracks the results across multiple parsing strategies.
+
+     Currently there are 3 parse strategies (in order):
+       1) First attempt to parse the RTF with the default strict decoding (rtf)
+       2) If that fails or there was no RTF we attempt to parsing the plain text body (plain_text).
+       3) If that fails we attempt to parse the RTF while ignore decoding errors (rtf_ignore)
+
+     The result of each parse is one of:
+        None: There was no rtf/plain_text to process.
+        Fail: An attempt was made but failed
+        True: We successfully parsed using this strategy.
+
+     If all strategies return None then there was no data to parse (EMPTY MESSAGE).
+     Otherwise, If no strategies return True then this failed and set set the content to indicate
+     a decode error.
+  """
+
+  def __init__(self):
+    self.rtf = None
+    self.plain_text = None
+    self.rtf_ignore = None
+
+  def empty(self):
+    return all(result == None for result in [self.rtf, self.plain_text, self.rtf_ignore])
+
+  def failed(self):
+    return not any(result for result in [self.rtf, self.plain_text, self.rtf_ignore])
+
+  def error_message(self):
+    return "--- DECODE ERRORS {} {} {}".format(
+              "rtf" if self.rtf is False else  "",
+              "plain_text" if self.plain_text is False else "",
+              "rtf_ignoring_codec_errors" if self.rtf_ignore is False else  "")
+
 
 # MAIN FUNCTIONS
 
@@ -36,6 +73,70 @@ def load(filename_or_stream):
   with compoundfiles.CompoundFileReader(filename_or_stream) as doc:
     doc.rtf_attachments = 0
     return load_message_stream(doc.root, True, doc)
+
+
+def process_plain_text(props, msg):
+  if 'BODY' not in props:
+      return None
+
+  body = props["BODY"]
+  if msg.get_content_maintype() == "multipart":
+      msg.add_attachment(body)
+  else:
+      if isinstance(body, str):
+          msg.set_content(body, cte="quoted-printable")
+      else:
+          msg.set_content(body, maintype="text", subtype="plain", cte="8bit")
+  return True
+
+
+def register_ignore_error_handler():
+    existing_handler = codecs.lookup_error('strict')
+    codecs.register_error('strict', codecs.replace_errors)
+    return existing_handler
+
+
+def restore_error_handler(h):
+    codecs.register_error('strict', h)
+
+
+def process_rtf(props, msg, ignore_codec_errors=False):
+
+    rtf = props.get("RTF_COMPRESSED")
+    if not rtf:
+       return None
+
+    # If ignore_codec_errors then we temporarily set the global decode
+    # error handler to use the 'replace_error' strategy.
+    existing_codec_error_handler = None
+    try:
+      if ignore_codec_errors:
+        existing_codec_error_handler = register_ignore_error_handler()
+
+      rtf = compressed_rtf.decompress(rtf)
+      rtf_obj = DeEncapsulator(rtf)
+      rtf_obj.deencapsulate()
+    except Exception as e:
+        # deencapsulation failed. return False so we proceed
+        # to remaining parsing strategies
+        return False
+    finally:
+      if existing_codec_error_handler:
+        restore_error_handler((existing_codec_error_handler))
+
+
+    if msg.get_content_maintype() == "multipart":
+      if rtf_obj.content_type == "html":
+        msg.add_attachment(rtf_obj.html)
+      else:
+        msg.add_attachment(rtf_obj.text)
+    else:
+      if rtf_obj.content_type == "html":
+        msg.set_content(rtf_obj.html, subtype="html", cte="8bit")
+      else:
+        msg.set_content(rtf_obj.text, cte="8bit")
+
+    return True
 
 
 def load_message_stream(entry, is_top_level, doc):
@@ -107,41 +208,17 @@ def load_message_stream(entry, is_top_level, doc):
             msg['Subject'] = props['SUBJECT']
         del props['SUBJECT']
 
-  # prefer the RTF body if available
-  rtf = props.get("RTF_COMPRESSED")
-  if rtf:
-      # Decompress the value to Rich Text Format.
-      try:
-          rtf = compressed_rtf.decompress(rtf)
+  result = ParseResult()
+  result.rtf = process_rtf(props, msg, ignore_codec_errors=False)
+  if not result.rtf:
+      result.plain_text = process_plain_text(props, msg)
+      if not result.plain_text:
+          result.rtf_ignore = process_rtf(props, msg, ignore_codec_errors=True)
 
-          rtf_obj = DeEncapsulator(rtf)
-          rtf_obj.deencapsulate()
-
-          if msg.get_content_maintype() == "multipart":
-              if rtf_obj.content_type == "html":
-                  msg.add_attachment(rtf_obj.html)
-              else:
-                  msg.add_attachment(rtf_obj.text)
-          else:
-              if rtf_obj.content_type == "html":
-                  msg.set_content(rtf_obj.html, subtype="html", cte="8bit")
-              else:
-                  msg.set_content(rtf_obj.text, cte="8bit")
-      except Exception as e:
-          print("Failed to handle RTF message body")
-          msg.set_content("-- RTF Decode Failure --")
-  # otherwise fall back to the plaintext body
-  elif "BODY" in props:
-      body = props["BODY"]
-      if msg.get_content_maintype() == "multipart":
-          msg.add_attachment(body)
-      else:
-          if isinstance(body, str):
-              msg.set_content(body, cte="quoted-printable")
-          else:
-              msg.set_content(body, maintype="text", subtype="plain", cte="8bit")
-  else:
+  if result.empty():
       msg.set_content("-- EMPTY MESSAGE --")
+  elif result.failed():
+      msg.set_content(result.error_message())
 
 
   # # Copy over string values of remaining properties as headers
