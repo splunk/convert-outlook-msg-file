@@ -100,6 +100,20 @@ def restore_error_handler(h):
     codecs.register_error('strict', h)
 
 
+def attempt_workaround_for_rtfde_grammer_bug(rtf):
+    """
+        The RTFDE grammar used to parse RTF is incorrect.  They have partial fixes in their dev branch
+        but those changes are massive and they have indicated they need to do more updates before releasing.
+
+        They are missing some control symobol definitions in the grammar rules which can lead to parsing errors.
+
+        This is a workaround until that is fixed.  If RTFDE releases a new version we can remove this workaround.
+
+        See thread here: https://github.com/seamustuohy/RTFDE/issues/5
+    """
+    return rtf.replace(b'\\\\', b"\\'5c").replace(b'\\{', b"\\'7b").replace(b'\\}', b"\\'7d").replace(b'\\~', b"")
+
+
 def process_rtf(props, msg, ignore_codec_errors=False):
 
     rtf = props.get("RTF_COMPRESSED")
@@ -114,6 +128,12 @@ def process_rtf(props, msg, ignore_codec_errors=False):
         existing_codec_error_handler = register_ignore_error_handler()
 
       rtf = compressed_rtf.decompress(rtf)
+
+      # If ignore_codec_errors is true we are attempting to parse an rtf that previous failed to parse.
+      # Apply workaround for existing RTFDE bug as best effort.
+      if ignore_codec_errors:
+          rtf = attempt_workaround_for_rtfde_grammer_bug(rtf)
+
       rtf_obj = DeEncapsulator(rtf)
       rtf_obj.deencapsulate()
     except Exception as e:
