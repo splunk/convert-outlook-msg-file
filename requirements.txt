@@ -1,3 +1,4 @@
 compoundfiles
 compressed-rtf
-RTFDE==0.0.2
+RTFDE==0.1.0
+git+https://github.com/seamustuohy/RTFDE.git@dev#egg=RTFDE

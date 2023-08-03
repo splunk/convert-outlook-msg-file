@@ -18,6 +18,7 @@ import os
 import sys
 import codecs
 
+from enum import Enum
 from functools import reduce
 
 import email.message, email.parser, email.policy
@@ -28,6 +29,36 @@ import compressed_rtf
 from RTFDE.deencapsulate import DeEncapsulator
 
 logger = logging.getLogger(__name__)
+
+
+class Workarounds(Enum):
+    NEWLINE_IN_CONTENT_DISPOSITION_FILENAME =1
+
+def header_store_parse_workaround(name, value):
+    '''  SAA-687 Workaround for Content-Disposition headers for attachments whose filename includes %OD%OA. 
+
+    We have only seen this from emails extracted from Outlook msg files which have an email emedded as an attachment and are from the 
+    tenant listed in that ticket.
+
+    By the time the python email library has extracted the attachment and passes it to this function the header name 
+    will be 'Content-Disposition' and value will be 'attachment; filename=.....\r\n...'.
+
+    If we don't replace this newline subsequent parser steps will raise an exception such as:
+        Error processing attachment Header values may not contain linefeed or carriage return characters
+
+    Example original header:
+        Content-Disposition: attachment;
+         filename*0*=us-ascii''%3CExternal%20Sender%3E%20Completed%3A%20Complete%20wi;
+         filename*1*=th%20Adobe%20Sign%3A%20Your%20Agreement%0D%0A%20Document%20Has;
+         filename*2*=%20Been%20Signed%20By%20Redacted%20-%20Ref%3A%201292.eml
+    '''
+    if name and ('Content-Disposition' in name):
+        if value and re.match('^attachment; filename=', value):
+            # replace any \r\n with whitespace before passing to original handler.
+            logger.warning(f"workaround: replacing newline in header {name}:{value}")
+            value = value.replace('\r\n', '  ')
+    return email.policy.default.header_store_parse(name,value)
+
 
 class ParseResult:
   """
@@ -68,11 +99,11 @@ class ParseResult:
 
 # MAIN FUNCTIONS
 
-
-def load(filename_or_stream):
+def load(filename_or_stream, workarounds=[]):
   with compoundfiles.CompoundFileReader(filename_or_stream) as doc:
     doc.rtf_attachments = 0
-    return load_message_stream(doc.root, True, doc)
+    return load_message_stream(doc.root, True, doc, workarounds)
+
 
 
 def process_plain_text(props, msg):
@@ -116,6 +147,8 @@ def attempt_workaround_for_rtfde_grammer_bug(rtf):
 
 def process_rtf(props, msg, ignore_codec_errors=False):
 
+    #import pdb
+    #pdb.set_trace()
     rtf = props.get("RTF_COMPRESSED")
     if not rtf:
        return None
@@ -147,24 +180,33 @@ def process_rtf(props, msg, ignore_codec_errors=False):
 
     if msg.get_content_maintype() == "multipart":
       if rtf_obj.content_type == "html":
-        msg.add_attachment(rtf_obj.html)
+        content = rtf_obj.html.decode() if isinstance(rtf_obj.html, bytes) else rtf_obj.html
+        msg.add_attachment(content)
       else:
-        msg.add_attachment(rtf_obj.text)
+        content = rtf_obj.text.decode() if isinstance(rtf_obj.text, bytes) else rtf_obj.text
+        msg.add_attachment(content)
     else:
       if rtf_obj.content_type == "html":
-        msg.set_content(rtf_obj.html, subtype="html", cte="8bit")
+        content = rtf_obj.html.decode() if isinstance(rtf_obj.html, bytes) else rtf_obj.html
+        msg.set_content(content, subtype="html", cte="8bit")
       else:
-        msg.set_content(rtf_obj.text, cte="8bit")
+        content = rtf_obj.text.decode() if isinstance(rtf_obj.text, bytes) else rtf_obj.text
+        msg.set_content(content, cte="8bit")
 
     return True
 
 
-def load_message_stream(entry, is_top_level, doc):
+
+def load_message_stream(entry, is_top_level, doc, workarounds=[]):
   # Load stream data.
   props = parse_properties(entry['__properties_version1.0'], is_top_level, entry, doc)
 
   # Construct the MIME message....
-  msg = email.message.EmailMessage()
+  policy = email.policy.default
+  if Workarounds.NEWLINE_IN_CONTENT_DISPOSITION_FILENAME in workarounds:
+    policy = email.policy.default.clone(header_store_parse=header_store_parse_workaround)
+
+  msg = email.message.EmailMessage(policy=policy)
 
   # Add the raw headers, if known.
   if 'TRANSPORT_MESSAGE_HEADERS' in props:
@@ -952,6 +994,6 @@ if __name__ == "__main__":
   else:
     for fn in sys.argv[1:]:
       print(fn + "...")
-      msg = load(fn)
+      msg = load(fn, workarounds=[Workarounds.NEWLINE_IN_CONTENT_DISPOSITION_FILENAME])
       with open(fn + ".eml", "wb") as f:
         f.write(msg.as_bytes())
