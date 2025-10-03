@@ -485,7 +485,7 @@ class UNICODE(VariableLengthValueLoader):
     # value is a bytestring. I haven't seen specified what character encoding
     # is used when the Unicode storage type is not used, so we'll assume it's
     # ASCII or Latin-1 like but we'll use UTF-8 to cover the bases.
-    return value.decode("utf16")
+    return value.decode("utf16", errors="surrogatepass")
 
 # TODO: The other variable-length tag types are "CLSID", "OBJECT".
 
