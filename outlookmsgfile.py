@@ -348,6 +348,7 @@ def parse_properties(properties, is_top_level, container, doc):
 
   # Read 16-byte entries.
   ret = { }
+  string8_properties = { }
   while i < len(stream):
     # Read the entry.
     property_type  = stream[i+0:i+2]
@@ -381,7 +382,9 @@ def parse_properties(properties, is_top_level, container, doc):
         logger.error("stream missing {}".format(streamname))
         continue
 
-      value = tag_type.load(value)
+      # Defer STRING8 decoding until all codepage properties have been read.
+      if not isinstance(tag_type, STRING8):
+        value = tag_type.load(value)
 
     elif isinstance(tag_type, EMBEDDED_MESSAGE):
       # Look up the stream in the document that holds the attachment.
@@ -403,6 +406,16 @@ def parse_properties(properties, is_top_level, container, doc):
       continue
 
     ret[tag_name] = value
+    if isinstance(tag_type, STRING8):
+      string8_properties[tag_name] = value
+    else:
+      string8_properties.pop(tag_name, None)
+
+  body_encoding = get_codepage_encoding(ret.get('PR_INTERNET_CPID'))
+  properties_encoding = get_codepage_encoding(ret.get('PR_MESSAGE_CODEPAGE'))
+  for tag_name, value in string8_properties.items():
+    encodings = (body_encoding, properties_encoding) if tag_name == 'BODY' else (properties_encoding, body_encoding)
+    ret[tag_name] = STRING8.load(value, encodings=encodings)
 
   return ret
 
@@ -468,15 +481,31 @@ class BINARY(VariableLengthValueLoader):
     # value is a bytestring. Just return it.
     return value
 
+def get_codepage_encoding(codepage):
+  if not isinstance(codepage, int):
+    return None
+  encoding = code_pages.get(codepage, 'cp{}'.format(codepage))
+  try:
+    return codecs.lookup(encoding).name
+  except LookupError:
+    return None
+
+
 class STRING8(VariableLengthValueLoader):
   @staticmethod
-  def load(value):
-    # value is a bytestring. I haven't seen specified what character encoding
-    # is used when the Unicode storage type is not used, so we'll assume it's
-    # ASCII or Latin-1 like but we'll use UTF-8 to cover the bases.
+  def load(value, encodings=()):
+    # Honor declared encodings first, then retain the fork's UTF-8/CP1252
+    # fallback when metadata is absent, unsupported, or cannot decode the value.
+    for encoding in encodings:
+      if encoding is None:
+        continue
+      try:
+        return value.decode(encoding)
+      except (UnicodeDecodeError, LookupError):
+        pass
     try:
       return value.decode("utf8")
-    except:
+    except UnicodeDecodeError:
       return value.decode("windows-1252")
 
 class UNICODE(VariableLengthValueLoader):
@@ -976,7 +1005,22 @@ property_tags = {
   0x3F06: ('YPOS', 'I4'),
   0x3F07: ('CONTROL_ID', 'BINARY'),
   0x3F08: ('INITIAL_DETAILS_PANE', 'I4'),
+  0x3FDE: ('PR_INTERNET_CPID', 'I4'),
+  0x3FFD: ('PR_MESSAGE_CODEPAGE', 'I4'),
 }
+
+
+# Codepage IDs whose Python codec names do not follow the cp<ID> convention.
+# Other Windows codepages (including 932, 936, and 1251) use Python's registry.
+code_pages = {
+  37: 'cp037',
+  20127: 'ascii',
+  20866: 'koi8-r',
+  21866: 'koi8-u',
+  65001: 'utf-8',
+}
+code_pages.update({28590 + n: 'iso8859_{}'.format(n) for n in range(1, 10)})
+code_pages.update({28603: 'iso8859_13', 28605: 'iso8859_15'})
 
 
 # COMMAND-LINE ENTRY POINT
